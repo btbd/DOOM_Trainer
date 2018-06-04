@@ -31,8 +31,8 @@ typedef struct {
 	char camera[8];
 } SAVE;
 
-void update();
-void listener();
+void Update();
+void Listener();
 void SetKeybinds(KEYBINDS *k);
 KEYBINDS GetKeybinds();
 LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

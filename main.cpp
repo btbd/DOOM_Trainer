@@ -42,7 +42,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 
-	CreateThread(0, 0, (LPTHREAD_START_ROUTINE)listener, 0, 0, 0);
+	CreateThread(0, 0, (LPTHREAD_START_ROUTINE)Listener, 0, 0, 0);
 
 	SetTimer(hWnd, 0, 8, 0);
 
@@ -422,7 +422,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 			break;
 		}
 		case WM_TIMER:
-			update();
+			Update();
 			break;
 		case WM_DESTROY:
 			PostQuitMessage(0);
@@ -432,7 +432,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
-void update() {
+void Update() {
 	static SINT save_poffsets[]     = { 0, 4, 8, 12, 16, 20 };
 	static SINT save_coffsets[]     = { 0, 4 };
 
@@ -666,7 +666,7 @@ void update() {
 	ReleaseDC(hWnd, hdcOld);
 }
 
-void listener() {
+void Listener() {
 	DWORD pid = 0;
 	MODULEENTRY32 module = { 0 };
 
