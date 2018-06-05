@@ -28,6 +28,7 @@ typedef struct {
 
 typedef struct {
 	char player[24];
+	float fz;
 	char camera[8];
 } SAVE;
 

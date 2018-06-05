@@ -3,7 +3,8 @@
 // #define DEBUG
 
 HANDLE process = 0;
-SINT base = 0, player_sig = 0, camera_sig = 0;
+SINT base = 0, player_sig = 0, camera_sig = 0, god_sig = 0, fall_sig = 0;
+SINT fall_offset = 0;
 
 HWND hWnd = 0;
 KEYBINDS keybinds = { 0 };
@@ -376,7 +377,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 					ShowWindow(CreateDialog(GetModuleHandle(0), MAKEINTRESOURCE(IDD_KEYBINDS), hWnd, KeybindsProc), SW_SHOW);
 					break;
 				case 1:
-					exit(0);
+					goto safe_exit;
 					break;
 			}
 
@@ -425,6 +426,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 			Update();
 			break;
 		case WM_DESTROY:
+			safe_exit:
+			WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
 			PostQuitMessage(0);
 			return 0;
 	}
@@ -463,6 +466,9 @@ void Update() {
 			if (GetAsyncKeyState(keybinds.god) < 0) {
 				if (!god_press) {
 					god = !god;
+					if (!god) {
+						WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
+					}
 				}
 
 				god_press = true;
@@ -506,6 +512,7 @@ void Update() {
 			for (int s = 0; s < sizeof(keybinds.save) / sizeof(keybinds.save[0]); ++s) {
 				if (keybinds.save[s] && GetAsyncKeyState(keybinds.save[s]) < 0) {
 					SAVE save = { 0 };
+					save.fz = ReadFloat(process, GetPointer(process, 4, player_sig, 0x8, 0x800, fall_offset));
 					ReadBuffer(process, (void *)player_base, save.player, sizeof(save.player));
 					if (fly) {
 						float angle = (float)atan2(fly_velocity[1], fly_velocity[0]);
@@ -533,19 +540,25 @@ void Update() {
 					sprintf(path + strlen(path), "doomtrainer_save_%d", s);
 
 					FILE *file = fopen(path, "rb");
-					if (file) {
+					struct stat st = { 0 };
+					stat(path, &st);
+					if (file && st.st_size == sizeof(SAVE)) {
 						SAVE save = { 0 };
 						fread(&save, sizeof(save), 1, file);
 
 						SINT camera = (SINT)ReadLongLong(process, (void *)camera_sig);
-						printf("%llx\n", camera);
-
+						
+						byte fall_og[8] = { 0 };
+						ReadBuffer(process, (void *)fall_sig, fall_og, 8);
+						WriteBuffer(process, (void *)fall_sig, "\x90\x90\x90\x90\x90\x90\x90\x90", 8);
+						WriteFloat(process, GetPointer(process, 4, player_sig, 0x8, 0x800, fall_offset), save.fz);
 						WriteBuffer(process, (void *)player_base, save.player, sizeof(save.player));
 						WriteFloat(process, (void *)(camera + 0x14), ReadFloat(process, (void *)(camera + 0x14)) - (ReadFloat(process, (void *)(camera_base + 4)) - *(float *)&save.camera[4]));
 						WriteFloat(process, (void *)(camera + 0x10), ReadFloat(process, (void *)(camera + 0x10)) - (ReadFloat(process, (void *)camera_base) - *(float *)&save.camera));
 						ReadBuffer(process, (void *)player_base, fly_position, sizeof(fly_position));
+						WriteBuffer(process, (void *)fall_sig, fall_og, 8);
 						Sleep(17);
-
+						
 						if (timer_position[0] != 0) {
 							timer_start = timeGetTime();
 						}
@@ -556,8 +569,8 @@ void Update() {
 			}
 		}
 
-		if (god) {
-			WriteFloat(process, (void *)(camera_base + 0x434FC - 0x12850), 100);
+		if (god || fly) {
+			WriteInt(process, GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98), 2);
 		}
 
 		if (fly) {
@@ -687,6 +700,16 @@ void Listener() {
 				player_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x48\x03\x0D\x00\x00\x00\x00\x39\x01", "xxx????xx");
 				player_sig += 3;
 				player_sig += ReadInt(process, (void *)player_sig) + 4;
+
+				god_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x48\x8D\x87\xE8\x03\x00\x00\x75\x04\x48\x8D\x47\x20", "xxxxxxxxxxxxx");
+				god_sig += 16;
+				god_sig += ReadInt(process, (void *)god_sig) + 4;
+
+				fall_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x40\x32\xFF\x44\x88\x6C\x24\x61", "xxxxxxxx");
+				fall_sig = (SINT)FindPattern(process, (void *)fall_sig, module.modBaseSize - (DWORD)(fall_sig - (SINT)module.modBaseAddr), "\xF3\x0F\x11\x00\x00\x00\x00\x00\xF3\x0F\x11", "xxx?????xxx");
+				fall_sig += 16;
+
+				fall_offset = ReadInt(process, (void *)(fall_sig + 4));
 
 				SINT src = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x49\xB9\x00\x00\x00\x00\x00\x00\x00\x00\x49\x89\x09", "xx????????xxx");
 				if (src) {
