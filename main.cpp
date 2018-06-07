@@ -3,7 +3,7 @@
 // #define DEBUG
 
 HANDLE process = 0;
-SINT base = 0, player_sig = 0, camera_sig = 0, god_sig = 0, fall_sig = 0;
+SINT base = 0, player_sig = 0, camera_sig = 0, god_sig = 0, fall_sig = 0, ammo_sig = 0;
 SINT fall_offset = 0;
 
 HWND hWnd = 0;
@@ -428,6 +428,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 		case WM_DESTROY:
 			safe_exit:
 			WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
+			WriteBuffer(process, (void *)ammo_sig, "\x01\x51\x38", 3);
 			PostQuitMessage(0);
 			return 0;
 	}
@@ -466,8 +467,12 @@ void Update() {
 			if (GetAsyncKeyState(keybinds.god) < 0) {
 				if (!god_press) {
 					god = !god;
+
 					if (!god) {
 						WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
+						WriteBuffer(process, (void *)ammo_sig, "\x01\x51\x38", 3);
+					} else {
+						WriteBuffer(process, (void *)ammo_sig, "\x90\x90\x90", 3);
 					}
 				}
 
@@ -490,6 +495,7 @@ void Update() {
 						WriteFloat(process, (void *)(player_base + 12), (float)cos(angle) * speed);
 						WriteFloat(process, (void *)(player_base + 16), (float)sin(angle) * speed);
 						WriteFloat(process, (void *)(player_base + 20), fly_velocity[2] * 60.0f);
+						WriteInt(process, GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98), 0);
 					}
 				}
 
@@ -708,6 +714,8 @@ void Listener() {
 				fall_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x40\x32\xFF\x44\x88\x6C\x24\x61", "xxxxxxxx");
 				fall_sig = (SINT)FindPattern(process, (void *)fall_sig, module.modBaseSize - (DWORD)(fall_sig - (SINT)module.modBaseAddr), "\xF3\x0F\x11\x00\x00\x00\x00\x00\xF3\x0F\x11", "xxx?????xxx");
 				fall_sig += 16;
+
+				ammo_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x01\x51\x38\x8B\x71", "xxxxx");
 
 				fall_offset = ReadInt(process, (void *)(fall_sig + 4));
 
