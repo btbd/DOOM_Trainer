@@ -3,11 +3,14 @@
 // #define DEBUG
 
 HANDLE process = 0;
-SINT base = 0, player_sig = 0, camera_sig = 0, god_sig = 0, fall_sig = 0, ammo_sig = 0;
+SINT base = 0, player_sig = 0, camera_sig = 0, god_sig = 0, fall_sig = 0, ammo_sig = 0, timescale_sig = 0;
 SINT fall_offset = 0;
 
 HWND hWnd = 0;
 KEYBINDS keybinds = { 0 };
+HHOOK keyboard_hook = 0;
+
+bool god = false, ammo = false;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine, int nCmdShow) {
 #ifdef DEBUG
@@ -45,6 +48,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 
 	CreateThread(0, 0, (LPTHREAD_START_ROUTINE)Listener, 0, 0, 0);
 
+	keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardHookProc, 0, 0);
+
 	SetTimer(hWnd, 0, 8, 0);
 
 	MSG msg;
@@ -67,6 +72,144 @@ void SetKeybinds(KEYBINDS *k) {
 	}
 }
 
+bool IsKeybindActive(short keybind[3]) {
+	if (!keybind[0]) return false;
+
+	for (int i = 0; i < 3; ++i) {
+		if (keybind[i] && !(GetAsyncKeyState(keybind[i]) < 0)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Hook_IsKeybindActive(char *keys, short key, short keybind[3]) {
+	if (!keybind[0]) return false;
+
+	bool s = false;
+
+	for (int i = 0; i < 3; ++i) {
+		if (keybind[i] == key) {
+			s = true;
+		}
+
+		if (keybind[i] && !keys[keybind[i]]) {
+			return false;
+		}
+	}
+
+	return s;
+}
+
+LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+	static char keys[0xFFF] = { 0 };
+
+	if (nCode >= 0) {
+		KBDLLHOOKSTRUCT data = *((KBDLLHOOKSTRUCT *)lParam);
+		int keycode = data.vkCode;
+
+		if (keycode == VK_LSHIFT || keycode == VK_RSHIFT) {
+			keycode = VK_SHIFT;
+		} else if (keycode == VK_LCONTROL || keycode == VK_RCONTROL) {
+			keycode = VK_CONTROL;
+		} else if (keycode == VK_LMENU || keycode == VK_RMENU) {
+			keycode = VK_MENU;
+		}
+
+		if (wParam == WM_KEYDOWN && !keys[keycode]) {
+			keys[keycode] = 1;
+
+			if (GetForegroundWindow() == FindWindowA("Zion", 0)) {
+				if (Hook_IsKeybindActive(keys, keycode, keybinds.god)) {
+					god = !god;
+
+					if (!god) WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
+				}
+
+				if (Hook_IsKeybindActive(keys, keycode, keybinds.ammo)) {
+					ammo = !ammo;
+
+					if (ammo) {
+						WriteBuffer(process, (void *)ammo_sig, "\x90\x90\x90", 3);
+					} else {
+						WriteBuffer(process, (void *)ammo_sig, "\x01\x51\x38", 3);
+					}
+				}
+
+				if (Hook_IsKeybindActive(keys, keycode, keybinds.time_increase)) {
+					void *addr = GetPointer(process, 2, timescale_sig, (SINT)0x60);
+					WriteFloat(process, addr, ReadFloat(process, addr) * 2.0f);
+				}
+
+				if (Hook_IsKeybindActive(keys, keycode, keybinds.time_decrease)) {
+					void *addr = GetPointer(process, 2, timescale_sig, (SINT)0x60);
+					WriteFloat(process, addr, ReadFloat(process, addr) / 2.0f);
+				}
+
+				if (Hook_IsKeybindActive(keys, keycode, keybinds.time_reset)) {
+					WriteFloat(process, GetPointer(process, 2, timescale_sig, (SINT)0x60), 1.0f);
+				}
+			}
+		} else if (wParam == WM_KEYUP && keys[keycode]) {
+			keys[keycode] = 0;
+		}
+	}
+
+	return CallNextHookEx(0, nCode, wParam, lParam);
+}
+
+void Keybind(short *keybind, short k0, short k1, short k2) {
+	keybind[0] = k0;
+	keybind[1] = k1;
+	keybind[2] = k2;
+}
+
+void GetKeybindText(char *text, short keybind[3]) {
+	if (keybind[0] == 0) {
+		strcpy(text, "None");
+		return;
+	}
+
+	text += GetKeyNameTextA(MapVirtualKey(keybind[0], MAPVK_VK_TO_VSC) << 16, text, 0xFF);
+
+	for (int i = 1; i < 3 && keybind[i] != 0; ++i) {
+		strcpy(text, " + ");
+		text += 3;
+		text += GetKeyNameTextA(MapVirtualKey(keybind[i], MAPVK_VK_TO_VSC) << 16, text, 0xFF);
+	}
+}
+
+LRESULT CALLBACK ButtonProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+	if (uMsg == WM_KEYDOWN) {
+		return 1;
+	}
+
+	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+
+void SetTextFromKeybind(HWND hDlg, int item, short keybind[3]) {
+	char text[0xFF] = { 0 };
+	GetKeybindText(text, keybind);
+	SetDlgItemTextA(hDlg, item, text);
+	SetWindowSubclass(GetDlgItem(hDlg, item), ButtonProc, 0, 0);
+}
+
+bool KeybindHasType(short keybind[3], short k) {
+	char type[0xFF] = { 0 };
+	GetKeyNameTextA(MapVirtualKey(k, MAPVK_VK_TO_VSC) << 16, type, 0xFF);
+
+	char text[0xFF] = { 0 };
+	for (int i = 0; i < 3; ++i) {
+		GetKeyNameTextA(MapVirtualKey(keybind[i], MAPVK_VK_TO_VSC) << 16, text, 0xFF);
+		if (strcmp(type, text) == 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 KEYBINDS GetKeybinds() {
 	KEYBINDS k = { 0 };
 	struct stat st = { 0 };
@@ -81,19 +224,20 @@ KEYBINDS GetKeybinds() {
 		fread(&k, sizeof(k), 1, file);
 		fclose(file);
 	} else {
-		k.forward = 0x57;
-		k.backward = 0x53;
-		k.left = 0x41;
-		k.right = 0x44;
-		k.up = 0x20;
-		k.down = 0x10;
-		k.increase = 0x45;
-		k.decrease = 0x51;
-		k.god = 0x31;
-		k.fly = 0x32;
-		k.timer = 0x33;
-		k.save[0] = 0x34;
-		k.load[0] = 0x35;
+		Keybind((short *)&k.forward, 0x57, 0, 0);
+		Keybind((short *)&k.backward, 0x53, 0, 0);
+		Keybind((short *)&k.left, 0x41, 0, 0);
+		Keybind((short *)&k.right, 0x44, 0, 0);
+		Keybind((short *)&k.up, 0x20, 0, 0);
+		Keybind((short *)&k.down, 0x10, 0, 0);
+		Keybind((short *)&k.increase, 0x45, 0, 0);
+		Keybind((short *)&k.decrease, 0x51, 0, 0);
+		Keybind((short *)&k.god, 0x31, 0, 0);
+		Keybind((short *)&k.fly, 0x32, 0, 0);
+		Keybind((short *)&k.timer, 0x33, 0, 0);
+		Keybind((short *)&k.save[0], 0x34, 0, 0);
+		Keybind((short *)&k.load[0], 0x35, 0, 0);
+
 		SetKeybinds(&k);
 	}
 
@@ -103,116 +247,155 @@ KEYBINDS GetKeybinds() {
 }
 
 INT_PTR CALLBACK KeybindsProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-	static char text[0xFF] = { 0 };
 	static DWORD active_id = 0;
+	static short keybind[3] = { 0 };
 
 	switch (uMsg) {
 		case WM_INITDIALOG:
 			active_id = 0;
-			SetTextFromKey(IDC_FORWARD, keybinds.forward);
-			SetTextFromKey(IDC_BACKWARD, keybinds.backward);
-			SetTextFromKey(IDC_LEFT, keybinds.left);
-			SetTextFromKey(IDC_RIGHT, keybinds.right);
-			SetTextFromKey(IDC_UP, keybinds.up);
-			SetTextFromKey(IDC_DOWN, keybinds.down);
-			SetTextFromKey(IDC_INCREASE, keybinds.increase);
-			SetTextFromKey(IDC_DECREASE, keybinds.decrease);
-			SetTextFromKey(IDC_GOD, keybinds.god);
-			SetTextFromKey(IDC_FLY, keybinds.fly);
-			SetTextFromKey(IDC_TIMER, keybinds.timer);
-			SetTextFromKey(IDC_SAVE0, keybinds.save[0]);
-			SetTextFromKey(IDC_LOAD0, keybinds.load[0]);
-			SetTextFromKey(IDC_SAVE1, keybinds.save[1]);
-			SetTextFromKey(IDC_LOAD1, keybinds.load[1]);
-			SetTextFromKey(IDC_SAVE2, keybinds.save[2]);
-			SetTextFromKey(IDC_LOAD2, keybinds.load[2]);
-			SetTextFromKey(IDC_SAVE3, keybinds.save[3]);
-			SetTextFromKey(IDC_LOAD3, keybinds.load[3]);
-			SetTextFromKey(IDC_SAVE4, keybinds.save[4]);
-			SetTextFromKey(IDC_LOAD4, keybinds.load[4]);
+			memset(&keybind, 0, sizeof(keybind));
+			SetTextFromKeybind(hDlg, IDC_FORWARD, keybinds.forward);
+			SetTextFromKeybind(hDlg, IDC_BACKWARD, keybinds.backward);
+			SetTextFromKeybind(hDlg, IDC_LEFT, keybinds.left);
+			SetTextFromKeybind(hDlg, IDC_RIGHT, keybinds.right);
+			SetTextFromKeybind(hDlg, IDC_UP, keybinds.up);
+			SetTextFromKeybind(hDlg, IDC_DOWN, keybinds.down);
+			SetTextFromKeybind(hDlg, IDC_INCREASE, keybinds.increase);
+			SetTextFromKeybind(hDlg, IDC_DECREASE, keybinds.decrease);
+			SetTextFromKeybind(hDlg, IDC_GOD, keybinds.god);
+			SetTextFromKeybind(hDlg, IDC_AMMO, keybinds.ammo);
+			SetTextFromKeybind(hDlg, IDC_FLY, keybinds.fly);
+			SetTextFromKeybind(hDlg, IDC_TIMER, keybinds.timer);
+			SetTextFromKeybind(hDlg, IDC_SAVE0, keybinds.save[0]);
+			SetTextFromKeybind(hDlg, IDC_LOAD0, keybinds.load[0]);
+			SetTextFromKeybind(hDlg, IDC_SAVE1, keybinds.save[1]);
+			SetTextFromKeybind(hDlg, IDC_LOAD1, keybinds.load[1]);
+			SetTextFromKeybind(hDlg, IDC_SAVE2, keybinds.save[2]);
+			SetTextFromKeybind(hDlg, IDC_LOAD2, keybinds.load[2]);
+			SetTextFromKeybind(hDlg, IDC_SAVE3, keybinds.save[3]);
+			SetTextFromKeybind(hDlg, IDC_LOAD3, keybinds.load[3]);
+			SetTextFromKeybind(hDlg, IDC_SAVE4, keybinds.save[4]);
+			SetTextFromKeybind(hDlg, IDC_LOAD4, keybinds.load[4]);
+			SetTextFromKeybind(hDlg, IDC_TIME_INCREASE, keybinds.time_increase);
+			SetTextFromKeybind(hDlg, IDC_TIME_DECREASE, keybinds.time_decrease);
+			SetTextFromKeybind(hDlg, IDC_TIME_RESET, keybinds.time_reset);
 			SetTimer(hDlg, 0, 17, NULL);
 			return (INT_PTR)TRUE;
 		case WM_TIMER: {
 			if (active_id) {
 				short key = 0;
-				for (short i = 4; i <= 0xFF; ++i) {
+				for (short i = 3; i <= 0xFF; ++i) {
 					if (GetAsyncKeyState(i) < 0) {
+						if (KeybindHasType(keybind, i)) {
+							continue;
+						}
+
 						key = i;
+						break;
+					} else if (keybind[0] == i || keybind[1] == i || keybind[2] == i) {
+						SetTextFromKeybind(hDlg, active_id, keybind);
+						SetKeybinds(&keybinds);
+						memset(&keybind, 0, sizeof(keybind));
+						active_id = 0;
+						key = 0;
 						break;
 					}
 				}
 
 				if (key) {
+					int i = 0;
+					for (; i < 3; ++i) {
+						if (keybind[i] == 0) {
+							keybind[i] = key;
+							break;
+						}
+					}
+
 					switch (active_id) {
 						case IDC_FORWARD:
-							keybinds.forward = key;
+							memcpy(&keybinds.forward, &keybind, sizeof(keybind));
 							break;
 						case IDC_BACKWARD:
-							keybinds.backward = key;
+							memcpy(&keybinds.backward, &keybind, sizeof(keybind));
 							break;
 						case IDC_LEFT:
-							keybinds.left = key;
+							memcpy(&keybinds.left, &keybind, sizeof(keybind));
 							break;
 						case IDC_RIGHT:
-							keybinds.right = key;
+							memcpy(&keybinds.right, &keybind, sizeof(keybind));
 							break;
 						case IDC_UP:
-							keybinds.up = key;
+							memcpy(&keybinds.up, &keybind, sizeof(keybind));
 							break;
 						case IDC_DOWN:
-							keybinds.down = key;
+							memcpy(&keybinds.down, &keybind, sizeof(keybind));
 							break;
 						case IDC_INCREASE:
-							keybinds.increase = key;
+							memcpy(&keybinds.increase, &keybind, sizeof(keybind));
 							break;
 						case IDC_DECREASE:
-							keybinds.decrease = key;
+							memcpy(&keybinds.decrease, &keybind, sizeof(keybind));
 							break;
 						case IDC_GOD:
-							keybinds.god = key;
+							memcpy(&keybinds.god, &keybind, sizeof(keybind));
+							break;
+						case IDC_AMMO:
+							memcpy(&keybinds.ammo, &keybind, sizeof(keybind));
 							break;
 						case IDC_FLY:
-							keybinds.fly = key;
+							memcpy(&keybinds.fly, &keybind, sizeof(keybind));
 							break;
 						case IDC_TIMER:
-							keybinds.timer = key;
+							memcpy(&keybinds.timer, &keybind, sizeof(keybind));
 							break;
 						case IDC_SAVE0:
-							keybinds.save[0] = key;
+							memcpy(&keybinds.save[0], &keybind, sizeof(keybind));
 							break;
 						case IDC_LOAD0:
-							keybinds.load[0] = key;
+							memcpy(&keybinds.load[0], &keybind, sizeof(keybind));
 							break;
 						case IDC_SAVE1:
-							keybinds.save[1] = key;
+							memcpy(&keybinds.save[1], &keybind, sizeof(keybind));
 							break;
 						case IDC_LOAD1:
-							keybinds.load[1] = key;
+							memcpy(&keybinds.load[1], &keybind, sizeof(keybind));
 							break;
 						case IDC_SAVE2:
-							keybinds.save[2] = key;
+							memcpy(&keybinds.save[2], &keybind, sizeof(keybind));
 							break;
 						case IDC_LOAD2:
-							keybinds.load[2] = key;
+							memcpy(&keybinds.load[2], &keybind, sizeof(keybind));
 							break;
 						case IDC_SAVE3:
-							keybinds.save[3] = key;
+							memcpy(&keybinds.save[3], &keybind, sizeof(keybind));
 							break;
 						case IDC_LOAD3:
-							keybinds.load[3] = key;
+							memcpy(&keybinds.load[3], &keybind, sizeof(keybind));
 							break;
 						case IDC_SAVE4:
-							keybinds.save[4] = key;
+							memcpy(&keybinds.save[4], &keybind, sizeof(keybind));
 							break;
 						case IDC_LOAD4:
-							keybinds.load[4] = key;
+							memcpy(&keybinds.load[4], &keybind, sizeof(keybind));
+							break;
+						case IDC_TIME_INCREASE:
+							memcpy(&keybinds.time_increase, &keybind, sizeof(keybind));
+							break;
+						case IDC_TIME_DECREASE:
+							memcpy(&keybinds.time_decrease, &keybind, sizeof(keybind));
+							break;
+						case IDC_TIME_RESET:
+							memcpy(&keybinds.time_reset, &keybind, sizeof(keybind));
 							break;
 					}
 
+					SetTextFromKeybind(hDlg, active_id, keybind);
 					SetKeybinds(&keybinds);
-					SetTextFromKey(active_id, key);
 
-					active_id = 0;
+					if (i == 3) {
+						memset(&keybind, 0, sizeof(keybind));
+						active_id = 0;
+					}
 				}
 
 				break;
@@ -223,141 +406,186 @@ INT_PTR CALLBACK KeybindsProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam
 		case WM_COMMAND: {
 			DWORD id = LOWORD(wParam);
 			switch (id) {
-				case IDC_FORWARD: case IDC_BACKWARD: case IDC_LEFT: case IDC_RIGHT: case IDC_UP: case IDC_DOWN: case IDC_INCREASE: case IDC_DECREASE: case IDC_GOD: case IDC_FLY: case IDC_TIMER: case IDC_SAVE0: case IDC_LOAD0: case IDC_SAVE1: case IDC_LOAD1:case IDC_SAVE2: case IDC_LOAD2: case IDC_SAVE3: case IDC_LOAD3: case IDC_SAVE4: case IDC_LOAD4: {
+				case IDC_FORWARD: case IDC_BACKWARD: case IDC_LEFT: case IDC_RIGHT: case IDC_UP: case IDC_DOWN: case IDC_INCREASE: case IDC_DECREASE: case IDC_GOD: case IDC_AMMO: case IDC_FLY: case IDC_TIMER: case IDC_SAVE0: case IDC_LOAD0: case IDC_SAVE1: case IDC_LOAD1:case IDC_SAVE2: case IDC_LOAD2: case IDC_SAVE3: case IDC_LOAD3: case IDC_SAVE4: case IDC_LOAD4: case IDC_TIME_INCREASE: case IDC_TIME_DECREASE: case IDC_TIME_RESET: {
+					if (active_id) {
+						SetTextFromKeybind(hDlg, active_id, keybind);
+						SetKeybinds(&keybinds);
+					}
+					memset(&keybind, 0, sizeof(keybind));
 					active_id = id;
 					break;
 				}
 				case IDC_FORWARD_CLEAR:
-					keybinds.forward = 0;
-					SetTextFromKey(IDC_FORWARD, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.forward, IDC_FORWARD);
 					break;
 				case IDC_BACKWARD_CLEAR:
-					keybinds.backward = 0;
-					SetTextFromKey(IDC_BACKWARD, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.backward, IDC_BACKWARD);
 					break;
 				case IDC_LEFT_CLEAR:
-					keybinds.left = 0;
-					SetTextFromKey(IDC_LEFT, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.left, IDC_LEFT);
 					break;
 				case IDC_RIGHT_CLEAR:
-					keybinds.right = 0;
-					SetTextFromKey(IDC_RIGHT, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.right, IDC_RIGHT);
 					break;
 				case IDC_UP_CLEAR:
-					keybinds.up = 0;
-					SetTextFromKey(IDC_UP, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.up, IDC_UP);
 					break;
 				case IDC_DOWN_CLEAR:
-					keybinds.down = 0;
-					SetTextFromKey(IDC_DOWN, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.down, IDC_DOWN);
 					break;
 				case IDC_INCREASE_CLEAR:
-					keybinds.increase = 0;
-					SetTextFromKey(IDC_INCREASE, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.increase, IDC_INCREASE);
 					break;
 				case IDC_DECREASE_CLEAR:
-					keybinds.decrease = 0;
-					SetTextFromKey(IDC_DECREASE, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.decrease, IDC_DECREASE);
 					break;
 				case IDC_GOD_CLEAR:
-					keybinds.god = 0;
-					SetTextFromKey(IDC_GOD, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.god, IDC_GOD);
+					break;
+				case IDC_AMMO_CLEAR:
+					ClearKeybind(keybinds.ammo, IDC_GOD);
 					break;
 				case IDC_FLY_CLEAR:
-					keybinds.fly = 0;
-					SetTextFromKey(IDC_FLY, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.fly, IDC_FLY);
 					break;
 				case IDC_TIMER_CLEAR:
-					keybinds.timer = 0;
-					SetTextFromKey(IDC_TIMER, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.timer, IDC_TIMER);
 					break;
 				case IDC_SAVE0_CLEAR:
-					keybinds.save[0] = 0;
-					SetTextFromKey(IDC_SAVE0, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.save[0], IDC_SAVE0);
 					break;
 				case IDC_LOAD0_CLEAR:
-					keybinds.load[0] = 0;
-					SetTextFromKey(IDC_LOAD0, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.load[0], IDC_LOAD0);
 					break;
 				case IDC_SAVE1_CLEAR:
-					keybinds.save[1] = 0;
-					SetTextFromKey(IDC_SAVE1, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.save[1], IDC_SAVE1);
 					break;
 				case IDC_LOAD1_CLEAR:
-					keybinds.load[1] = 0;
-					SetTextFromKey(IDC_LOAD1, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.load[1], IDC_LOAD1);
 					break;
 				case IDC_SAVE2_CLEAR:
-					keybinds.save[2] = 0;
-					SetTextFromKey(IDC_SAVE2, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.save[2], IDC_SAVE2);
 					break;
 				case IDC_LOAD2_CLEAR:
-					keybinds.load[2] = 0;
-					SetTextFromKey(IDC_LOAD2, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.load[2], IDC_LOAD2);
 					break;
 				case IDC_SAVE3_CLEAR:
-					keybinds.save[3] = 0;
-					SetTextFromKey(IDC_SAVE3, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.save[3], IDC_SAVE3);
 					break;
 				case IDC_LOAD3_CLEAR:
-					keybinds.load[3] = 0;
-					SetTextFromKey(IDC_LOAD3, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.load[3], IDC_LOAD3);
 					break;
 				case IDC_SAVE4_CLEAR:
-					keybinds.save[4] = 0;
-					SetTextFromKey(IDC_SAVE4, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.save[4], IDC_SAVE4);
 					break;
 				case IDC_LOAD4_CLEAR:
-					keybinds.load[4] = 0;
-					SetTextFromKey(IDC_LOAD4, 0);
-					active_id = 0;
-					SetKeybinds(&keybinds);
+					ClearKeybind(keybinds.load[4], IDC_LOAD4);
+					break;
+				case IDC_TIME_INCREASE_CLEAR:
+					ClearKeybind(keybinds.time_increase, IDC_TIME_INCREASE);
+					break;
+				case IDC_TIME_DECREASE_CLEAR:
+					ClearKeybind(keybinds.time_decrease, IDC_TIME_DECREASE);
+					break;
+				case IDC_TIME_RESET_CLEAR:
+					ClearKeybind(keybinds.time_increase, IDC_TIME_RESET);
 					break;
 			}
 
 			break;
 		}
+		case WM_LBUTTONDOWN: case WM_KILLFOCUS: {
+			if (active_id) {
+				switch (active_id) {
+					case IDC_FORWARD:
+						memcpy(&keybinds.forward, &keybind, sizeof(keybind));
+						break;
+					case IDC_BACKWARD:
+						memcpy(&keybinds.backward, &keybind, sizeof(keybind));
+						break;
+					case IDC_LEFT:
+						memcpy(&keybinds.left, &keybind, sizeof(keybind));
+						break;
+					case IDC_RIGHT:
+						memcpy(&keybinds.right, &keybind, sizeof(keybind));
+						break;
+					case IDC_UP:
+						memcpy(&keybinds.up, &keybind, sizeof(keybind));
+						break;
+					case IDC_DOWN:
+						memcpy(&keybinds.down, &keybind, sizeof(keybind));
+						break;
+					case IDC_INCREASE:
+						memcpy(&keybinds.increase, &keybind, sizeof(keybind));
+						break;
+					case IDC_DECREASE:
+						memcpy(&keybinds.decrease, &keybind, sizeof(keybind));
+						break;
+					case IDC_GOD:
+						memcpy(&keybinds.god, &keybind, sizeof(keybind));
+						break;
+					case IDC_AMMO:
+						memcpy(&keybinds.ammo, &keybind, sizeof(keybind));
+						break;
+					case IDC_FLY:
+						memcpy(&keybinds.fly, &keybind, sizeof(keybind));
+						break;
+					case IDC_TIMER:
+						memcpy(&keybinds.timer, &keybind, sizeof(keybind));
+						break;
+					case IDC_SAVE0:
+						memcpy(&keybinds.save[0], &keybind, sizeof(keybind));
+						break;
+					case IDC_LOAD0:
+						memcpy(&keybinds.load[0], &keybind, sizeof(keybind));
+						break;
+					case IDC_SAVE1:
+						memcpy(&keybinds.save[1], &keybind, sizeof(keybind));
+						break;
+					case IDC_LOAD1:
+						memcpy(&keybinds.load[1], &keybind, sizeof(keybind));
+						break;
+					case IDC_SAVE2:
+						memcpy(&keybinds.save[2], &keybind, sizeof(keybind));
+						break;
+					case IDC_LOAD2:
+						memcpy(&keybinds.load[2], &keybind, sizeof(keybind));
+						break;
+					case IDC_SAVE3:
+						memcpy(&keybinds.save[3], &keybind, sizeof(keybind));
+						break;
+					case IDC_LOAD3:
+						memcpy(&keybinds.load[3], &keybind, sizeof(keybind));
+						break;
+					case IDC_SAVE4:
+						memcpy(&keybinds.save[4], &keybind, sizeof(keybind));
+						break;
+					case IDC_LOAD4:
+						memcpy(&keybinds.load[4], &keybind, sizeof(keybind));
+						break;
+					case IDC_TIME_INCREASE:
+						memcpy(&keybinds.time_increase, &keybind, sizeof(keybind));
+						break;
+					case IDC_TIME_DECREASE:
+						memcpy(&keybinds.time_decrease, &keybind, sizeof(keybind));
+						break;
+					case IDC_TIME_RESET:
+						memcpy(&keybinds.time_reset, &keybind, sizeof(keybind));
+						break;
+				}
+
+				SetTextFromKeybind(hDlg, active_id, keybind);
+				SetKeybinds(&keybinds);
+				memset(&keybind, 0, sizeof(keybind));
+			}
+
+			active_id = 0;
+
+			break;
+		}
 		case WM_CLOSE:
+			KillTimer(hDlg, 0);
+			memset(&keybind, 0, sizeof(keybind));
 			active_id = 0;
 			EndDialog(hDlg, 0);
 			SetKeybinds(&keybinds);
@@ -437,17 +665,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 }
 
 void Update() {
-	static SINT save_poffsets[]     = { 0, 4, 8, 12, 16, 20 };
-	static SINT save_coffsets[]     = { 0, 4 };
+	static SINT  save_poffsets[]     = { 0, 4, 8, 12, 16, 20 };
+	static SINT  save_coffsets[]     = { 0, 4 };
 
 	static bool  fly                 = false;
 	static bool  fly_press           = false;
 	static float fly_position[3]     = { 0 };
 	static float fly_velocity[3]     = { 0 };
 	static float fly_multiplier		 = 1;
-
-	static bool  god                 = false;
-	static bool  god_press	         = false;
 
 	static float timer_position[3]   = { 0 };
 	static DWORD timer_start         = 0;
@@ -464,24 +689,7 @@ void Update() {
 		bool active = GetForegroundWindow() == FindWindowA("Zion", 0);
 
 		if (active) {
-			if (GetAsyncKeyState(keybinds.god) < 0) {
-				if (!god_press) {
-					god = !god;
-
-					if (!god) {
-						WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
-						WriteBuffer(process, (void *)ammo_sig, "\x01\x51\x38", 3);
-					} else {
-						WriteBuffer(process, (void *)ammo_sig, "\x90\x90\x90", 3);
-					}
-				}
-
-				god_press = true;
-			} else {
-				god_press = false;
-			}
-
-			if (GetAsyncKeyState(keybinds.fly) < 0) {
+			if (IsKeybindActive(keybinds.fly)) {
 				if (!fly_press) {
 					fly = !fly;
 
@@ -504,7 +712,7 @@ void Update() {
 				fly_press = false;
 			}
 
-			if (GetAsyncKeyState(keybinds.timer) < 0) {
+			if (IsKeybindActive(keybinds.timer)) {
 				if (++timer_press > 50) {
 					timer_position[0] = 0;
 					timer = 0;
@@ -516,7 +724,7 @@ void Update() {
 			}
 
 			for (int s = 0; s < sizeof(keybinds.save) / sizeof(keybinds.save[0]); ++s) {
-				if (keybinds.save[s] && GetAsyncKeyState(keybinds.save[s]) < 0) {
+				if (keybinds.save[s][0] && IsKeybindActive(keybinds.save[s])) {
 					SAVE save = { 0 };
 					save.fz = ReadFloat(process, GetPointer(process, 4, player_sig, 0x8, 0x800, fall_offset));
 					ReadBuffer(process, (void *)player_base, save.player, sizeof(save.player));
@@ -538,9 +746,7 @@ void Update() {
 						fwrite(&save, sizeof(save), 1, file);
 						fclose(file);
 					}
-				}
-
-				if (keybinds.load[s] && GetAsyncKeyState(keybinds.load[s]) < 0) {
+				} else if (keybinds.load[s][0] && IsKeybindActive(keybinds.load[s])) {
 					char path[0xFF] = { 0 };
 					GetTempPathA(sizeof(path), path);
 					sprintf(path + strlen(path), "doomtrainer_save_%d", s);
@@ -576,7 +782,7 @@ void Update() {
 		}
 
 		if (god || fly) {
-			WriteInt(process, GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98), 2);
+			WriteInt(process, GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98), 4);
 		}
 
 		if (fly) {
@@ -584,14 +790,14 @@ void Update() {
 			
 			float vx = 0, vy = 0, vz = 0;
 			if (active) {
-				vx = (float)(GetAsyncKeyState(keybinds.forward) < 0) - (GetAsyncKeyState(keybinds.backward) < 0);
-				vy = (float)(GetAsyncKeyState(keybinds.left) < 0) - (GetAsyncKeyState(keybinds.right) < 0);
-				vz = (float)(GetAsyncKeyState(keybinds.up) < 0) - (GetAsyncKeyState(keybinds.down) < 0);
+				vx = (float)(IsKeybindActive(keybinds.forward)) - (IsKeybindActive(keybinds.backward));
+				vy = (float)(IsKeybindActive(keybinds.left)) - (IsKeybindActive(keybinds.right));
+				vz = (float)(IsKeybindActive(keybinds.up)) - (IsKeybindActive(keybinds.down));
 
-				if (GetAsyncKeyState(keybinds.increase) < 0) {
-					fly_multiplier += 0.05f;
-				} else if (GetAsyncKeyState(keybinds.decrease) < 0) {
-					fly_multiplier -= 0.05f;
+				if (IsKeybindActive(keybinds.increase)) {
+					fly_multiplier += 0.04f;
+				} else if (IsKeybindActive(keybinds.decrease)) {
+					fly_multiplier -= 0.04f;
 					if (fly_multiplier < 0.1) {
 						fly_multiplier = 0.1f;
 					}
@@ -647,7 +853,7 @@ void Update() {
 	FillRect(hdc, &rect, brush);
 	SetBkColor(hdc, RGB(255, 2555, 255));
 	SetTextColor(hdc, RGB(0, 0, 0));
-	HFONT font = CreateFontA(26, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial");
+	HFONT font = CreateFontA(26, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Lucida Sans Typewriter");
 	SelectObject(hdc, font);
 
 	sprintf(buffer,
@@ -668,12 +874,21 @@ void Update() {
 	DrawTextA(hdc, buffer, -1, &rect, DT_LEFT | DT_WORDBREAK);
 
 	rect.top += HEIGHT - 26 - 5;
-	rect.left += 40;
-	rect.right -= 40;
+	rect.left += 20;
+	rect.right -= 20;
+
+	if (ammo) SetTextColor(hdc, RGB(255, 0, 0));
+	DrawTextA(hdc, "ammo", -1, &rect, DT_CENTER);
+	SetTextColor(hdc, RGB(0, 0, 0));
+
+	rect.left = 5;
 
 	if (god) SetTextColor(hdc, RGB(255, 0, 0));
 	DrawTextA(hdc, "god", -1, &rect, DT_LEFT);
 	SetTextColor(hdc, RGB(0, 0, 0));
+
+	rect.right = WIDTH - 7;
+
 	if (fly) SetTextColor(hdc, RGB(255, 0, 0));
 	DrawTextA(hdc, "fly", -1, &rect, DT_RIGHT);
 
@@ -704,6 +919,12 @@ void Listener() {
 				base = (SINT)module.modBaseAddr;
 
 				player_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x48\x03\x0D\x00\x00\x00\x00\x39\x01", "xxx????xx");
+				if (player_sig == 0) {
+					pid = 0;
+					CloseHandle(process);
+					continue;
+				}
+
 				player_sig += 3;
 				player_sig += ReadInt(process, (void *)player_sig) + 4;
 
@@ -716,6 +937,10 @@ void Listener() {
 				fall_sig += 16;
 
 				ammo_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x01\x51\x38\x8B\x71", "xxxxx");
+
+				timescale_sig = (SINT)FindPattern(process, module.modBaseAddr, module.modBaseSize, "\x01\x51\x0C\x48\x8B\xD9", "xxxxxx");
+				timescale_sig += 9;
+				timescale_sig += ReadInt(process, (void *)timescale_sig) + 4;
 
 				fall_offset = ReadInt(process, (void *)(fall_sig + 4));
 
