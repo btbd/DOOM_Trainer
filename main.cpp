@@ -21,7 +21,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 #endif
 
 	keybinds = GetKeybinds();
-
+	
 	WNDCLASSEXW wcex = { 0 };
 	wcex.cbSize = sizeof(WNDCLASSEX);
 	wcex.style = CS_HREDRAW | CS_VREDRAW;
@@ -29,6 +29,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 	wcex.cbClsExtra = 0;
 	wcex.cbWndExtra = 0;
 	wcex.hInstance = hInstance;
+	wcex.hIcon = LoadIcon(GetModuleHandle(0), MAKEINTRESOURCE(IDI_ICON));
 	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wcex.hbrBackground = (HBRUSH)(CreateSolidBrush(RGB(255, 255, 255)));
 	wcex.lpszClassName = L"wnd";
@@ -40,7 +41,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 	if (hWnd == NULL) {
 		return 0;
 	}
-
+	
 	SetWindowLong(hWnd, GWL_STYLE, 0);
 	SetWindowLong(hWnd, GWL_STYLE, WS_BORDER);
 	ShowWindow(hWnd, nCmdShow);
@@ -233,10 +234,14 @@ KEYBINDS GetKeybinds() {
 		Keybind((short *)&k.increase, 0x45, 0, 0);
 		Keybind((short *)&k.decrease, 0x51, 0, 0);
 		Keybind((short *)&k.god, 0x31, 0, 0);
+		Keybind((short *)&k.ammo, 0x31, 0, 0);
 		Keybind((short *)&k.fly, 0x32, 0, 0);
 		Keybind((short *)&k.timer, 0x33, 0, 0);
 		Keybind((short *)&k.save[0], 0x34, 0, 0);
 		Keybind((short *)&k.load[0], 0x35, 0, 0);
+		Keybind((short *)&k.time_increase, VK_CONTROL, VK_OEM_PLUS, 0);
+		Keybind((short *)&k.time_decrease, VK_CONTROL, VK_OEM_MINUS, 0);
+		Keybind((short *)&k.time_reset, VK_CONTROL, 0x30, 0);
 
 		SetKeybinds(&k);
 	}
@@ -655,6 +660,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 			break;
 		case WM_DESTROY:
 			safe_exit:
+			WriteFloat(process, GetPointer(process, 2, timescale_sig, (SINT)0x60), 1.0f);
 			WriteInt(process, (void *)(GetPointer(process, 5, god_sig, (SINT)0x0, (SINT)0x18, (SINT)0x228, (SINT)0x98)), 0);
 			WriteBuffer(process, (void *)ammo_sig, "\x01\x51\x38", 3);
 			PostQuitMessage(0);
@@ -853,7 +859,7 @@ void Update() {
 	FillRect(hdc, &rect, brush);
 	SetBkColor(hdc, RGB(255, 2555, 255));
 	SetTextColor(hdc, RGB(0, 0, 0));
-	HFONT font = CreateFontA(26, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Lucida Sans Typewriter");
+	HFONT font = CreateFontA(26, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial");
 	SelectObject(hdc, font);
 
 	sprintf(buffer,
@@ -874,7 +880,7 @@ void Update() {
 	DrawTextA(hdc, buffer, -1, &rect, DT_LEFT | DT_WORDBREAK);
 
 	rect.top += HEIGHT - 26 - 5;
-	rect.left += 20;
+	rect.left += 32;
 	rect.right -= 20;
 
 	if (ammo) SetTextColor(hdc, RGB(255, 0, 0));
