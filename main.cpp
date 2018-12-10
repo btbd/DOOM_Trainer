@@ -976,6 +976,7 @@ void Listener() {
 			pid = 0;
 			base = 0;
 			process = 0;
+			god = ammo = false;
 		}
 
 		Sleep(2000);
