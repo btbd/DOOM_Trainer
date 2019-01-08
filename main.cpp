@@ -448,7 +448,7 @@ INT_PTR CALLBACK KeybindsProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam
 					ClearKeybind(keybinds.god, IDC_GOD);
 					break;
 				case IDC_AMMO_CLEAR:
-					ClearKeybind(keybinds.ammo, IDC_GOD);
+					ClearKeybind(keybinds.ammo, IDC_AMMO);
 					break;
 				case IDC_FLY_CLEAR:
 					ClearKeybind(keybinds.fly, IDC_FLY);

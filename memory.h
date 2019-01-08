@@ -9,15 +9,6 @@
 
 #pragma comment(lib, "Ntdll.lib")
 
-typedef LONG NTSTATUS;
-typedef DWORD KPRIORITY;
-typedef WORD UWORD;
-
-typedef struct _CLIENT_ID {
-	PVOID UniqueProcess;
-	PVOID UniqueThread;
-} CLIENT_ID, *PCLIENT_ID;
-
 typedef struct _THREAD_BASIC_INFORMATION {
 	NTSTATUS                ExitStatus;
 	PVOID                   TebBaseAddress;
